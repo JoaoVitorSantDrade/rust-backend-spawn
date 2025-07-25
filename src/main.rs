@@ -7,8 +7,8 @@ use axum::{
     Router,
     routing::{get, post},
 };
-use std::env;
-use tokio::sync::mpsc;
+use std::{env, sync::Arc};
+use tokio::sync::{Mutex, mpsc};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
@@ -45,13 +45,13 @@ async fn main() {
     let processador_default = Processor::new_async(
         false,
         100,
-        constantes::URL_DEFAULT.to_string(),
+        env::var("URL_DEFAULT").unwrap_or_else(|_| constantes::URL_DEFAULT.to_string()),
         TipoProcessador::Default,
     );
     let processador_fallback = Processor::new_async(
         false,
         100,
-        constantes::URL_FALLBACK.to_string(),
+        env::var("URL_FALLBACK").unwrap_or_else(|_| constantes::URL_FALLBACK.to_string()),
         TipoProcessador::Fallback,
     );
 
@@ -79,10 +79,16 @@ async fn main() {
         }
     }
 
-    tokio::spawn(Box::pin(consumer::cria_worker_consumidor(
-        receiver,
-        app_state.clone(),
-    )));
+    let shared_receiver = Arc::new(Mutex::new(receiver));
+    let num_workers = 40;
+    info!("Iniciando {} workers consumidores...", num_workers);
+    for i in 0..num_workers {
+        tokio::spawn(Box::pin(consumer::worker_processa_pagamento(
+            i, // Passa um ID para o worker para logging
+            app_state.clone(),
+            Arc::clone(&shared_receiver),
+        )));
+    }
 
     let app = Router::new()
         .route("/payments", post(handler::submit_work_handler))

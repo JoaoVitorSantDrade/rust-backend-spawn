@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use tokio::{
-    sync::{RwLock, mpsc::UnboundedReceiver},
+    sync::{Mutex, RwLock, mpsc::UnboundedReceiver},
     task,
 };
 use tracing::{error, info, warn};
@@ -15,13 +15,28 @@ use crate::{
     },
 };
 
-pub async fn cria_worker_consumidor(receptor: UnboundedReceiver<Payment>, state: AppState) {
-    info!("[WORKER CONSUMIDOR] Iniciado!");
-    let mut rx = receptor;
-    while let Some(payment) = rx.recv().await {
-        info!("📦 Pagamento recebido: ID {}", payment.correlation_id);
-        tokio::spawn(processa_pagamento(state.clone(), payment));
-        info!("🧵 Task criada para lidar com pagamento");
+pub async fn worker_processa_pagamento(
+    worker_id: u32,
+    state: AppState,
+    receiver: Arc<Mutex<UnboundedReceiver<Payment>>>,
+) {
+    info!("[Worker {}] Iniciado!", worker_id);
+    loop {
+        let payment = {
+            let mut rx_guard = receiver.lock().await;
+            rx_guard.recv().await
+        };
+
+        if let Some(payment) = payment {
+            info!(
+                "[Worker {}] 📦 Pegou pagamento da fila: ID {}",
+                worker_id, payment.correlation_id
+            );
+            processa_pagamento(state.clone(), payment).await;
+        } else {
+            info!("[Worker {}] Canal fechado. Encerrando.", worker_id);
+            break;
+        }
     }
 }
 async fn escolher_processador(
@@ -43,8 +58,8 @@ async fn escolher_processador(
 async fn processa_pagamento(state: AppState, mut payment: Payment) {
     let task_id = task::id();
     let mut retry_delay = Duration::from_secs(1);
-    let max_retry_delay = Duration::from_secs(4);
-    let max_retry_times = 5u8;
+    let max_retry_delay = Duration::from_secs(2);
+    let max_retry_times = 15u8;
     let mut retry_times = 0u8;
 
     loop {

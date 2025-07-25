@@ -9,7 +9,7 @@ use crate::{
     api::redis,
     appstate::AppState,
     models::{
-        data_range::DateRangeParams, payment::Payment, processor::TipoProcessador,
+        self, data_range::DateRangeParams, payment::Payment, processor::TipoProcessador,
         summary::PaymentSummary,
     },
 };
@@ -82,32 +82,28 @@ pub async fn get_payment_summary(
         .unwrap_or(u64::MAX);
 
     match redis::coletar_entre_timestamp(&state, from_ts, to_ts).await {
-        Ok(pagamentos) => {
-            info!(
-                "Construindo sumário a partir de {} pagamentos recuperados.",
-                pagamentos.len()
-            );
-            let mut summary = PaymentSummary::default();
-
-            for p in pagamentos {
-                if let Some(tipo) = p.tipo {
-                    match tipo {
-                        TipoProcessador::Default => {
-                            summary.default.total_requests += 1;
-                            summary.default.total_amount += p.amount;
-                        }
-                        TipoProcessador::Fallback => {
-                            summary.fallback.total_requests += 1;
-                            summary.fallback.total_amount += p.amount;
-                        }
-                        TipoProcessador::None => {
-                            // Ignora pagamentos com tipo 'None'
-                        }
-                    }
-                }
-            }
-
+        Ok(summary_data) if summary_data.len() == 4 => {
+            info!("Sumário agregado recebido do Redis com sucesso.");
+            // Constrói o objeto PaymentSummary diretamente a partir dos resultados
+            let summary = PaymentSummary {
+                default: models::summary::Summary {
+                    total_requests: summary_data[0] as u64,
+                    total_amount: summary_data[1],
+                },
+                fallback: models::summary::Summary {
+                    total_requests: summary_data[2] as u64,
+                    total_amount: summary_data[3],
+                },
+            };
             (StatusCode::OK, Json(summary)).into_response()
+        }
+        Ok(_) => {
+            error!("Resposta inesperada do script Redis para o sumário.");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Resposta inesperada do banco de dados.".to_string(),
+            )
+                .into_response()
         }
         Err(e) => {
             error!("Erro ao coletar sumário de pagamentos: {}", e);
