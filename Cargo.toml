@@ -7,6 +7,12 @@ edition = "2024"
 name = "rust-backend"
 path = "src/main.rs"
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
 [dependencies]
 async-nats = "0.42.0"
 axum = "0.8.4"
@@ -15,11 +21,15 @@ console-subscriber = "0.4.1"
 deadpool = "0.12.2"
 deadpool-redis = "0.22.0"
 futures = "0.3.31"
+jemallocator = "0.5.4"
 redis = {version = "0.32.4",features = ["json"]}
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust_decimal = {version="1.37.2", features = ["serde-float"]}
+rust_decimal_macros = "1.37.1"
 serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0"
 tokio = { version = "1", features = ["full","tracing"] }
+tower = {version="0.5", features = ["buffer", "limit"]}
 tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = {version = "0.3", features = ["env-filter"]}

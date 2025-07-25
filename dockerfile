@@ -4,7 +4,10 @@
 FROM rust:1.88-slim AS builder
 
 # Instala dependências de compilação necessárias para algumas crates (como reqwest com openssl).
-RUN apt-get update && apt-get install -y libssl-dev pkg-config
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    pkg-config \
+    build-essential 
 
 WORKDIR /usr/src/app
 

@@ -18,7 +18,6 @@ pub async fn cria_worker_confere_saude(state: AppState) {
                     let mut processor_guard = processor_lock.write().await;
                     processor_guard.failing = processor.failing;
                     processor_guard.min_response_time = processor.min_response_time;
-                    drop(processor_guard);
                 }
             }
         }

@@ -40,7 +40,6 @@ pub async fn coleta_saude_processador(state: AppState, tipo: TipoProcessador) {
             .http_client
             .get(&address)
             .version(Version::HTTP_11)
-            .timeout(Duration::from_millis(100 + min_response_time as u64))
             .send()
             .await
         {
@@ -86,14 +85,14 @@ pub async fn coleta_saude_processador(state: AppState, tipo: TipoProcessador) {
                 error!("[HEALTH-{:?}] Requisição não foi aceita. {}.", tipo, e);
             }
         };
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(5) + Duration::from_millis(min_response_time)).await;
     }
 }
 
 async fn marcar_como_falho(processor_arc: &Arc<RwLock<Processor>>) {
     let mut processor_guard = processor_arc.write().await;
     processor_guard.failing = true;
-    processor_guard.min_response_time = 200;
+    processor_guard.min_response_time = 500;
     drop(processor_guard);
 }
 

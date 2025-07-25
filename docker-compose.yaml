@@ -18,7 +18,7 @@ x-api-base: &api-base
       limits:
         # Exemplo: 0.5 CPU por instância.
         cpus: "0.5"
-        memory: "50MB"
+        memory: "40MB"
 
 services:
   # Load Balancer que distribui a carga e expõe a porta 9999.
@@ -39,7 +39,7 @@ services:
       resources:
         limits:
           # Limites para o Nginx, geralmente baixos.
-          cpus: "0.4"
+          cpus: "0.39"
           memory: "50MB"
 
   # API - Instância 1 (Líder)
@@ -54,6 +54,7 @@ services:
       - URL_FALLBACK=http://payment-processor-fallback:8080
       - ROLE=LIDER # Define o papel desta instância como líder.
       - AMBIENTE=PROD
+      - NUM_CONSUMER=5
 
   # API - Instância 2 (Colaboradora)
   api02:
@@ -67,11 +68,11 @@ services:
       - URL_FALLBACK=http://payment-processor-fallback:8080
       - ROLE=COLAB # Define o papel desta instância como colaboradora.
       - AMBIENTE=PROD
+      - NUM_CONSUMER=5
 
   # Fila de Mensagens
   nats:
     image: nats:2.10.7-alpine
-    # O comando `-js` habilita o JetStream (camada de persistência).
     ports:
       # Expor as portas pode ser útil para debug local.
       - "4222:4222" # Porta do cliente
@@ -89,7 +90,7 @@ services:
       resources:
         limits:
           cpus: "0.01"
-          memory: "50MB"
+          memory: "30MB"
 
   # Banco de Dados em Memória
   redis:
@@ -108,7 +109,7 @@ services:
     deploy:
         resources:
           limits:
-            cpus: "0.09"
+            cpus: "0.1"
             memory: "50MB"
 
 networks:

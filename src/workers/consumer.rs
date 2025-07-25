@@ -1,5 +1,4 @@
 use std::{sync::Arc, time::Duration};
-
 use tokio::{
     sync::{Mutex, RwLock, mpsc::UnboundedReceiver},
     task,
@@ -57,10 +56,12 @@ async fn escolher_processador(
 
 async fn processa_pagamento(state: AppState, mut payment: Payment) {
     let task_id = task::id();
-    let mut retry_delay = Duration::from_secs(1);
-    let max_retry_delay = Duration::from_secs(2);
-    let max_retry_times = 15u8;
+    let mut retry_delay = Duration::from_millis(10);
+    let max_retry_delay = Duration::from_millis(500);
+    let max_retry_times = 30u8;
     let mut retry_times = 0u8;
+
+    payment.update_date();
 
     loop {
         if retry_times >= max_retry_times {
@@ -98,7 +99,7 @@ async fn processa_pagamento(state: AppState, mut payment: Payment) {
             guard.address.clone()
         };
         let payment_url = format!("{}/payments", address);
-        payment.update_date();
+
         let response_result = state
             .http_client
             .post(&payment_url)
@@ -113,11 +114,8 @@ async fn processa_pagamento(state: AppState, mut payment: Payment) {
                     task_id, payment.correlation_id, tipo
                 );
                 payment.set_processador(tipo);
-                salvar_pagamento(&payment, &state).await;
-                info!(
-                    "[TASK {}] - [PROCESSAMENTO-{}] Pagamento salvo no Redis.",
-                    task_id, payment.correlation_id
-                );
+                salvar_pagamento(payment, &state).await;
+                info!("[TASK {}] Pagamento salvo no Redis.", task_id);
                 return;
             }
 

@@ -1,52 +1,119 @@
 use deadpool_redis::{
-    Config, Manager, Runtime,
+    Config, Manager, PoolConfig, Runtime,
     redis::{RedisError, Script},
 };
-use redis::AsyncCommands;
-use std::env;
+use tracing::{info, warn};
+
+use std::{env, time::Duration};
 
 use crate::{appstate::AppState, constantes, models};
-
-pub async fn estabelecer_conexao() -> Result<redis::Client, RedisError> {
-    let db_url = env::var("DB_URL").unwrap_or_else(|_| constantes::REDIS_URL.to_string());
-
-    match redis::Client::open(db_url) {
-        Ok(conn) => Ok(conn),
-        Err(e) => {
-            tracing::error!("Erro ao estabelecer conexão com o Redis");
-            Err(e)
-        }
-    }
-}
 
 pub async fn estabelecer_pool_conexao()
 -> deadpool::managed::Pool<Manager, deadpool_redis::Connection> {
     let db_url = env::var("DB_URL").unwrap_or_else(|_| constantes::REDIS_URL.to_string());
-    let cfg = Config::from_url(db_url);
-    cfg.create_pool(Some(Runtime::Tokio1)).unwrap()
-}
+    let pool_qtd: usize = (env::var("NUM_CONSUMER")
+        .unwrap_or_else(|_| constantes::NUM_CONSUMER.to_string()))
+    .parse()
+    .unwrap();
 
-pub async fn salvar_pagamento(pagamento: &models::payment::Payment, state: &AppState) {
-    let mut conn = state.redis_pool.get().await.unwrap();
-    let pagamento_json = serde_json::to_string(pagamento).unwrap();
-    let pagamento_chave = format!("payment:{}", pagamento.correlation_id);
-    let pagamento_tempo = pagamento.requested_at.unwrap().timestamp();
-    let sorted_set_key = "payments_by_date";
-    let () = redis::pipe()
-        .atomic()
-        .set(&pagamento_chave, &pagamento_json)
-        .expire(&pagamento_chave, 65)
-        .zadd(sorted_set_key, &pagamento_chave, pagamento_tempo)
-        .query_async(&mut conn)
-        .await
-        .unwrap();
+    let max_tentativas = 5u8;
+    let delay_secs = 5u64;
+
+    for tentativa in 1..=max_tentativas {
+        let mut cfg = Config::from_url(&db_url);
+        cfg.pool = Some(PoolConfig::new(pool_qtd * 2));
+
+        info!(
+            "Tentando criar pool de conexões Redis (tentativa {}/{})...",
+            tentativa, max_tentativas
+        );
+
+        match cfg.create_pool(Some(Runtime::Tokio1)) {
+            Ok(pool) => {
+                info!("✅ Pool de conexões Redis criado com sucesso!");
+                return pool; // Renomeado de 'cliente' para 'pool' para clareza
+            }
+
+            Err(e) => {
+                warn!("Falha ao criar pool de conexões Redis: {}", e); // CORREÇÃO: Mensagem de log
+
+                if tentativa < max_tentativas {
+                    warn!("Tentando novamente em {} segundos...", delay_secs);
+                    tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                }
+            }
+        }
+    }
+    panic!(
+        "❌ Não foi possível criar o pool de conexões Redis após {} tentativas.",
+        max_tentativas
+    );
+}
+pub async fn salvar_pagamento(pagamento: models::payment::Payment, state: &AppState) {
+    let max_tentativas = 50u8;
+    let retry_delay = tokio::time::Duration::from_millis(1);
+
+    let pagamento_chave = format!("payment:{}", &pagamento.correlation_id);
+    let pagamento_tempo = pagamento.requested_at.unwrap().timestamp_micros() as u64;
+    let pagamento_json =
+        match tokio::task::spawn_blocking(move || serde_json::to_string(&pagamento)).await {
+            Ok(Ok(json)) => json,
+            Ok(Err(e)) => {
+                tracing::error!("Falha ao serializar pagamento: {}", e);
+                return;
+            }
+            Err(e) => {
+                tracing::error!("Task de serialização falhou (panic): {}", e);
+                return;
+            }
+        };
+    for tentativa in 1..=max_tentativas {
+        let mut conn = match state.redis_pool.get().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(
+                    "[Redis Save] Falha ao pegar conexão (tentativa {}/{}): {}. Tentando novamente...",
+                    tentativa,
+                    max_tentativas,
+                    e
+                );
+                tokio::time::sleep(retry_delay).await;
+                continue;
+            }
+        };
+
+        let sorted_set_key = "payments_by_date";
+
+        let result: Result<(), redis::RedisError> = redis::pipe()
+            .atomic()
+            .set(&pagamento_chave, &pagamento_json)
+            .expire(&pagamento_chave, 60 * 5)
+            .zadd(sorted_set_key, &pagamento_chave, &pagamento_tempo)
+            .query_async(&mut conn)
+            .await;
+
+        match result {
+            Ok(_) => {
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[Redis Save] Falha ao executar pipeline (tentativa {}/{}): {}. Tentando novamente...",
+                    tentativa,
+                    max_tentativas,
+                    e
+                );
+                tokio::time::sleep(retry_delay).await;
+            }
+        }
+    }
 }
 
 pub async fn coletar_entre_timestamp(
     state: &AppState,
-    from: u64, // Alterado para u64 para consistência com timestamps
+    from: u64,
     to: u64,
-) -> Result<Vec<f64>, RedisError> {
+) -> Result<(u64, String, u64, String), RedisError> {
     // Pega uma conexão do pool de forma segura, propagando o erro se falhar.
     let mut conn = state.redis_pool.get().await.unwrap();
 
@@ -64,8 +131,8 @@ pub async fn coletar_entre_timestamp(
         local fallback_reqs = 0
         local fallback_amt = 0.0
         
-        -- Processa as chaves em lotes de 1000 para evitar limites do Lua
-        local chunk_size = 1000
+        -- Processa as chaves em lotes de 5000 para evitar limites do Lua
+        local chunk_size = 100
         for i = 1, #keys, chunk_size do
             -- Cria uma subtabela (chunk) para a chamada MGET
             local chunk_keys = {}
@@ -91,12 +158,16 @@ pub async fn coletar_entre_timestamp(
             end
         end
 
-        return {default_reqs, default_amt, fallback_reqs, fallback_amt}
+        return {
+            default_reqs,
+            string.format('%.4f', default_amt),
+            fallback_reqs,
+            string.format('%.4f', fallback_amt)
+        }
     "#,
     );
 
-    // Invoca o script e espera um vetor de números como resposta.
-    let summary_data: Vec<f64> = script
+    let summary_data: (u64, String, u64, String) = script
         .key(sorted_set_key)
         .arg(from)
         .arg(to)
