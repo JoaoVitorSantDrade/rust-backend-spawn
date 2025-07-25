@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU16, AtomicUsize},
+};
 
 use deadpool::managed::Pool;
 use deadpool_redis::{Connection, Manager};
@@ -13,5 +16,6 @@ pub struct AppState {
     pub http_client: Client,
     pub redis_pool: Pool<Manager, Connection>,
     pub nats_client: async_nats::Client,
-    pub sender_queue: mpsc::UnboundedSender<Payment>,
+    pub sender_queue: Arc<Vec<mpsc::UnboundedSender<Payment>>>,
+    pub round_robin_counter: Arc<AtomicUsize>,
 }

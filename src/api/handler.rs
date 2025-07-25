@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
 };
 use rust_decimal::Decimal;
-use std::str::FromStr;
+use std::{str::FromStr, sync::atomic::Ordering};
 use tracing::{error, info, instrument};
 
 use crate::{
@@ -21,8 +21,9 @@ pub async fn submit_work_handler(
         "Recebida requisição para processar pagamento: {:?}",
         payload.correlation_id
     );
-
-    match state.sender_queue.send(payload) {
+    let counter = state.round_robin_counter.fetch_add(1, Ordering::Relaxed);
+    let sender = &state.sender_queue[counter % state.sender_queue.len()];
+    match sender.send(payload) {
         Ok(_) => {
             info!("Pagamento recebido com sucesso!");
             (

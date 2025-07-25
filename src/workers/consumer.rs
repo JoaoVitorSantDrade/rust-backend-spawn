@@ -17,26 +17,17 @@ use crate::{
 pub async fn worker_processa_pagamento(
     worker_id: u32,
     state: AppState,
-    receiver: Arc<Mutex<UnboundedReceiver<Payment>>>,
+    mut receiver: UnboundedReceiver<Payment>,
 ) {
     info!("[Worker {}] Iniciado!", worker_id);
-    loop {
-        let payment = {
-            let mut rx_guard = receiver.lock().await;
-            rx_guard.recv().await
-        };
-
-        if let Some(payment) = payment {
-            info!(
-                "[Worker {}] 📦 Pegou pagamento da fila: ID {}",
-                worker_id, payment.correlation_id
-            );
-            processa_pagamento(state.clone(), payment).await;
-        } else {
-            info!("[Worker {}] Canal fechado. Encerrando.", worker_id);
-            break;
-        }
+    while let Some(payment) = receiver.recv().await {
+        info!(
+            "[Worker {}] 📦 Pegou pagamento da fila: ID {}",
+            worker_id, payment.correlation_id
+        );
+        processa_pagamento(state.clone(), payment).await;
     }
+    info!("[Worker {}] Canal fechado. Encerrando.", worker_id);
 }
 async fn escolher_processador(
     state: &AppState,

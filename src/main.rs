@@ -23,7 +23,13 @@ use axum::{
     routing::{get, post},
 };
 use reqwest::StatusCode;
-use std::{env, sync::Arc};
+use std::{
+    env,
+    sync::{
+        Arc,
+        atomic::{AtomicU16, AtomicUsize},
+    },
+};
 use tokio::sync::{Mutex, mpsc};
 use tower::{BoxError, ServiceBuilder, buffer::BufferLayer};
 use tracing::info;
@@ -60,15 +66,39 @@ async fn main() {
     );
 
     let vc_proc = vec![processador_default, processador_fallback];
-    let (sender, receiver) = mpsc::unbounded_channel::<Payment>();
+
+    let num_workers = (env::var("NUM_CONSUMER")
+        .unwrap_or_else(|_| constantes::NUM_CONSUMER.to_string()))
+    .parse()
+    .unwrap();
+
+    let mut senders = Vec::with_capacity(num_workers);
+    let mut receivers = Vec::with_capacity(num_workers);
+
+    for _ in 0..num_workers {
+        let (sender, receiver) = mpsc::unbounded_channel::<Payment>();
+        senders.push(sender);
+        receivers.push(receiver);
+    }
+
     let nats_client = cria_cliente_nats().await;
     let app_state = AppState {
         http_client: cria_cliente_http(),
         processors: vc_proc,
         redis_pool: estabelecer_pool_conexao().await,
         nats_client: nats_client,
-        sender_queue: sender,
+        sender_queue: Arc::new(senders),
+        round_robin_counter: Arc::new(AtomicUsize::new(0)),
     };
+
+    info!("Iniciando {} workers consumidores...", num_workers);
+    for (i, receiver) in receivers.into_iter().enumerate() {
+        tokio::spawn(Box::pin(consumer::worker_processa_pagamento(
+            i as u32,
+            app_state.clone(),
+            receiver,
+        )));
+    }
 
     match env::var("ROLE")
         .unwrap_or_else(|_| "LIDER".to_string())
@@ -82,20 +112,6 @@ async fn main() {
                 app_state.clone(),
             ));
         }
-    }
-
-    let shared_receiver = Arc::new(Mutex::new(receiver));
-    let num_workers = (env::var("NUM_CONSUMER")
-        .unwrap_or_else(|_| constantes::NUM_CONSUMER.to_string()))
-    .parse()
-    .unwrap();
-    info!("Iniciando {} workers consumidores...", num_workers);
-    for i in 0..num_workers {
-        tokio::spawn(Box::pin(consumer::worker_processa_pagamento(
-            i,
-            app_state.clone(),
-            Arc::clone(&shared_receiver),
-        )));
     }
 
     let app = Router::new()
