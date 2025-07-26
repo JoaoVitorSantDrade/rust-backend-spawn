@@ -1,4 +1,5 @@
 use axum::{
+    body::Bytes,
     extract::{Json, Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -10,20 +11,16 @@ use tracing::{error, info, instrument};
 use crate::{
     api::redis,
     appstate::AppState,
-    models::{self, data_range::DateRangeParams, payment::Payment, summary::PaymentSummary},
+    models::{self, data_range::DateRangeParams, summary::PaymentSummary},
 };
 
 pub async fn submit_work_handler(
     State(state): State<AppState>,
-    Json(payload): Json<Payment>,
+    body: Bytes,
 ) -> (StatusCode, String) {
-    info!(
-        "Recebida requisição para processar pagamento: {:?}",
-        payload.correlation_id
-    );
     let counter = state.round_robin_counter.fetch_add(1, Ordering::Relaxed);
     let sender = &state.sender_queue[counter % state.sender_queue.len()];
-    match sender.send(payload) {
+    match sender.send(body) {
         Ok(_) => {
             info!("Pagamento recebido com sucesso!");
             (

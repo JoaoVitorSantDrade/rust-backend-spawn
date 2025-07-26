@@ -1,9 +1,10 @@
+use axum::body::Bytes;
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{RwLock, mpsc::UnboundedReceiver},
     task,
 };
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::{
     api::redis::salvar_pagamento,
@@ -17,14 +18,27 @@ use crate::{
 pub async fn worker_processa_pagamento(
     worker_id: u32,
     state: AppState,
-    mut receiver: UnboundedReceiver<Payment>,
+    mut receiver: UnboundedReceiver<Bytes>,
 ) {
     info!("[Worker {}] Iniciado!", worker_id);
-    while let Some(payment) = receiver.recv().await {
-        info!(
-            "[Worker {}] 📦 Pegou pagamento da fila: ID {}",
-            worker_id, payment.correlation_id
-        );
+
+    while let Some(body_bytes) = receiver.recv().await {
+        let mut bytes_vec = body_bytes.to_vec();
+        let payload: Payment = match simd_json::from_slice(&mut bytes_vec) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Mensagem inválida recebida, descartando: {}", e);
+                continue;
+            }
+        };
+
+        let payment = Payment {
+            correlation_id: payload.correlation_id,
+            amount: payload.amount,
+            requested_at: None,
+            tipo: None,
+        };
+
         processa_pagamento(state.clone(), payment).await;
     }
     info!("[Worker {}] Canal fechado. Encerrando.", worker_id);
@@ -45,7 +59,8 @@ async fn escolher_processador(
     (None, TipoProcessador::None)
 }
 
-async fn processa_pagamento(state: AppState, mut payment: Payment) {
+#[instrument(skip_all, fields(correlation_id = %payment.correlation_id))]
+pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
     let task_id = task::id();
     let mut retry_delay = Duration::from_millis(10);
     let max_retry_delay = Duration::from_secs(1);

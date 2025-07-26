@@ -132,7 +132,7 @@ pub async fn coletar_entre_timestamp(
         local fallback_amt = 0.0
         
         -- Processa as chaves em lotes de 5000 para evitar limites do Lua
-        local chunk_size = 100
+        local chunk_size = 5000
         for i = 1, #keys, chunk_size do
             -- Cria uma subtabela (chunk) para a chamada MGET
             local chunk_keys = {}

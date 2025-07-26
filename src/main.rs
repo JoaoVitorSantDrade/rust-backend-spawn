@@ -11,14 +11,12 @@ use crate::{
         handler, http::cria_cliente_http, nats::cria_cliente_nats, redis::estabelecer_pool_conexao,
     },
     appstate::AppState,
-    models::{
-        payment::Payment,
-        processor::{Processor, TipoProcessador},
-    },
+    models::processor::{Processor, TipoProcessador},
     workers::{consumer, health_checker, health_consumer},
 };
 use axum::{
     Router,
+    body::Bytes,
     error_handling::HandleErrorLayer,
     routing::{get, post},
 };
@@ -28,16 +26,20 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 use tokio::sync::mpsc;
-use tower::{BoxError, ServiceBuilder, buffer::BufferLayer, limit::ConcurrencyLimitLayer};
+use tower::{BoxError, ServiceBuilder, buffer::BufferLayer, layer, limit::ConcurrencyLimitLayer};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::main(worker_threads = 4)]
 async fn main() {
     match env::var("AMBIENTE").as_deref() {
         Ok("PROD") => {
+            let file_appender = tracing_appender::rolling::never("./logs", "rinha.log");
+            let (non_blocking_writer, _guard) = tracing_appender::non_blocking(file_appender);
             let subscriber = FmtSubscriber::builder()
                 .with_env_filter(EnvFilter::from_default_env())
+                .with_writer(non_blocking_writer)
+                .json()
                 .finish();
             tracing::subscriber::set_global_default(subscriber)
                 .expect("setting default subscriber failed");
@@ -73,7 +75,7 @@ async fn main() {
     let mut receivers = Vec::with_capacity(num_workers);
 
     for _ in 0..num_workers {
-        let (sender, receiver) = mpsc::unbounded_channel::<Payment>();
+        let (sender, receiver) = mpsc::unbounded_channel::<Bytes>();
         senders.push(sender);
         receivers.push(receiver);
     }
@@ -126,7 +128,7 @@ async fn main() {
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(handle_tower_error))
-                .layer(BufferLayer::new(1024)),
+                .layer(BufferLayer::new(1024 * 3)),
         );
     let app = high_priority_router
         .merge(low_priority_router)
