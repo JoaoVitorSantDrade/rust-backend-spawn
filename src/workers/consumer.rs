@@ -57,7 +57,7 @@ async fn escolher_processador(
 async fn processa_pagamento(state: AppState, mut payment: Payment) {
     let task_id = task::id();
     let mut retry_delay = Duration::from_millis(10);
-    let max_retry_delay = Duration::from_millis(500);
+    let max_retry_delay = Duration::from_millis(1000);
     let max_retry_times = 30u8;
     let mut retry_times = 0u8;
 
