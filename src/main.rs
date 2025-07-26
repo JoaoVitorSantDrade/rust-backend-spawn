@@ -25,8 +25,8 @@ use std::{
     env,
     sync::{Arc, atomic::AtomicUsize},
 };
-use tokio::sync::mpsc;
-use tower::{BoxError, ServiceBuilder, buffer::BufferLayer, layer, limit::ConcurrencyLimitLayer};
+use tokio::sync::{Semaphore, mpsc};
+use tower::{BoxError, ServiceBuilder, buffer::BufferLayer, limit::ConcurrencyLimitLayer};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
@@ -88,6 +88,7 @@ async fn main() {
         nats_client: nats_client,
         sender_queue: Arc::new(senders),
         round_robin_counter: Arc::new(AtomicUsize::new(0)),
+        fast_furious: Arc::new(Semaphore::new(60)),
     };
 
     info!("Iniciando {} workers consumidores...", num_workers);

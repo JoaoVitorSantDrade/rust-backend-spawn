@@ -6,35 +6,63 @@ use axum::{
 };
 use rust_decimal::Decimal;
 use std::{str::FromStr, sync::atomic::Ordering};
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, warn};
 
 use crate::{
     api::redis,
     appstate::AppState,
-    models::{self, data_range::DateRangeParams, summary::PaymentSummary},
+    models::{self, data_range::DateRangeParams, payment::Payment, summary::PaymentSummary},
 };
 
 pub async fn submit_work_handler(
     State(state): State<AppState>,
     body: Bytes,
 ) -> (StatusCode, String) {
-    let counter = state.round_robin_counter.fetch_add(1, Ordering::Relaxed);
-    let sender = &state.sender_queue[counter % state.sender_queue.len()];
-    match sender.send(body) {
-        Ok(_) => {
-            info!("Pagamento recebido com sucesso!");
-            (
-                StatusCode::OK,
-                "Pagamento recebido com sucesso!".to_string(),
-            )
-        }
-        Err(e) => {
-            error!("Falha ao enviar pagamento para a fila de trabalho: {}", e);
+    let semaphore = state.fast_furious.clone();
 
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Falha ao enviar pagamento para a fila de trabalho: {}", e),
-            )
+    if let Ok(permit) = semaphore.try_acquire_owned() {
+        info!("Executando no caminho rápido (fast path)...");
+
+        let mut bytes_vec = body.to_vec();
+        let payload: Payment = match simd_json::from_slice(&mut bytes_vec) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Payload inválido no caminho rápido: {}", e);
+                return (StatusCode::BAD_REQUEST, "JSON inválido".to_string());
+            }
+        };
+
+        let payment = Payment {
+            correlation_id: payload.correlation_id,
+            amount: payload.amount,
+            requested_at: None,
+            tipo: None,
+        };
+
+        tokio::spawn(async move {
+            let _permit = permit;
+            crate::workers::consumer::processa_pagamento(state.clone(), payment).await;
+        });
+
+        (
+            StatusCode::OK,
+            "Pagamento recebido para processamento.".to_string(),
+        )
+    } else {
+        info!("Caminho rápido ocupado. Usando a fila...");
+
+        let counter = state.round_robin_counter.fetch_add(1, Ordering::Relaxed);
+        let sender = &state.sender_queue[counter % state.sender_queue.len()];
+
+        match sender.send(body) {
+            Ok(_) => (
+                StatusCode::OK,
+                "Pagamento enfileirado com sucesso.".to_string(),
+            ),
+            Err(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Fila de trabalho cheia.".to_string(),
+            ),
         }
     }
 }
