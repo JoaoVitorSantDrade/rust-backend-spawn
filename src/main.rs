@@ -29,7 +29,7 @@ use tower::{BoxError, ServiceBuilder, buffer::BufferLayer};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::main]
 async fn main() {
     match env::var("AMBIENTE").as_deref() {
         Ok("PROD") => {
