@@ -87,7 +87,7 @@ pub async fn salvar_pagamento(pagamento: models::payment::Payment, state: &AppSt
         let result: Result<(), redis::RedisError> = redis::pipe()
             .atomic()
             .set(&pagamento_chave, &pagamento_json)
-            .expire(&pagamento_chave, 60 * 5)
+            .expire(&pagamento_chave, 80)
             .zadd(sorted_set_key, &pagamento_chave, &pagamento_tempo)
             .query_async(&mut conn)
             .await;

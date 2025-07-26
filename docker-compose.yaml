@@ -1,33 +1,25 @@
 name: rust-backend-spawn
 
-# Define uma âncora YAML para reutilizar a configuração base da API,
-# mantendo o código limpo e fácil de manter.
+
 x-api-base: &api-base
   image: jvsandrade/rust-backend-spawn:latest
-  # Garante que a API só inicie depois que NATS e Redis estiverem saudáveis.
   depends_on:
     redis:
       condition: service_healthy
-  # Conecta a API à rede interna e à rede externa dos processadores de pagamento.
   networks:
     - rinha-net
     - payment-processor
-  # Define os limites de recursos para cada instância da API.
   deploy:
     resources:
       limits:
-        # Exemplo: 0.5 CPU por instância.
         cpus: "0.5"
-        memory: "40MB"
+        memory: "60MB"
 
 services:
-  # Load Balancer que distribui a carga e expõe a porta 9999.
   nginx:
     image: nginx:1.27-alpine
-    # Monta o arquivo de configuração do Nginx.
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    # Expõe a porta principal da aplicação.
     ports:
       - "9999:9999"
     depends_on:
@@ -38,49 +30,44 @@ services:
     deploy:
       resources:
         limits:
-          # Limites para o Nginx, geralmente baixos.
           cpus: "0.39"
-          memory: "50MB"
+          memory: "80MB"
 
   # API - Instância 1 (Líder)
   api01:
-    <<: *api-base # Reutiliza a configuração base.
+    <<: *api-base 
     hostname: api01
     environment:
-      # Endereços para os serviços internos, usando os nomes de serviço do Docker Compose.
       - NATS_URL=nats://nats:4222
       - DB_URL=redis://redis:6379
       - URL_DEFAULT=http://payment-processor-default:8080
       - URL_FALLBACK=http://payment-processor-fallback:8080
-      - ROLE=LIDER # Define o papel desta instância como líder.
+      - ROLE=LIDER 
       - AMBIENTE=PROD
-      - NUM_CONSUMER=5
+      - NUM_CONSUMER=50
 
   # API - Instância 2 (Colaboradora)
   api02:
-    <<: *api-base # Reutiliza a configuração base.
+    <<: *api-base 
     hostname: api02
     environment:
-      # Endereços para os serviços internos.
       - NATS_URL=nats://nats:4222
       - DB_URL=redis://redis:6379
       - URL_DEFAULT=http://payment-processor-default:8080
       - URL_FALLBACK=http://payment-processor-fallback:8080
-      - ROLE=COLAB # Define o papel desta instância como colaboradora.
+      - ROLE=COLAB 
       - AMBIENTE=PROD
-      - NUM_CONSUMER=5
+      - NUM_CONSUMER=50
 
   # Fila de Mensagens
   nats:
-    image: nats:2.10.7-alpine
+    image: nats:2.11-alpine
     ports:
-      # Expor as portas pode ser útil para debug local.
-      - "4222:4222" # Porta do cliente
-      - "8222:8222" # Porta de monitoramento HTTP
+      - "4222:4222" 
+      - "8222:8222" 
     networks:
       - rinha-net
     healthcheck:
-      # Verifica se o servidor NATS está saudável e pronto para aceitar conexões.
       test: ["CMD-SHELL", "nats server check"]
       interval: 10s
       timeout: 5s
@@ -92,16 +79,14 @@ services:
           cpus: "0.01"
           memory: "30MB"
 
-  # Banco de Dados em Memória
   redis:
     image: redis:7.2-alpine
     hostname: redis
     ports:
-      - "6379:6379" # Útil para debug local com `redis-cli`.
+      - "6379:6379" 
     networks:
       - rinha-net
     healthcheck:
-      # Verifica se o Redis responde a um comando PING.
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
@@ -110,12 +95,10 @@ services:
         resources:
           limits:
             cpus: "0.1"
-            memory: "50MB"
+            memory: "120MB"
 
 networks:
   rinha-net:
     driver: bridge
   payment-processor:
-    # Esta rede é criada externamente pelo script de teste da Rinha.
-    # Ao rodar localmente, crie-a com `docker network create payment-processor`.
     external: true
