@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU16, AtomicUsize},
-};
+use std::sync::{Arc, atomic::AtomicUsize};
 
 use deadpool::managed::Pool;
 use deadpool_redis::{Connection, Manager};

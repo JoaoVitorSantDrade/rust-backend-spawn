@@ -25,12 +25,9 @@ use axum::{
 use reqwest::StatusCode;
 use std::{
     env,
-    sync::{
-        Arc,
-        atomic::{AtomicU16, AtomicUsize},
-    },
+    sync::{Arc, atomic::AtomicUsize},
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tower::{BoxError, ServiceBuilder, buffer::BufferLayer, limit::ConcurrencyLimitLayer};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};

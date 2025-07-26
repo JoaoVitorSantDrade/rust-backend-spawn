@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{Mutex, RwLock, mpsc::UnboundedReceiver},
+    sync::{RwLock, mpsc::UnboundedReceiver},
     task,
 };
 use tracing::{error, info, warn};

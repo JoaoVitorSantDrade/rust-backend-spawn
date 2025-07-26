@@ -44,7 +44,7 @@ services:
       - URL_FALLBACK=http://payment-processor-fallback:8080
       - ROLE=LIDER 
       - AMBIENTE=PROD
-      - NUM_CONSUMER=50
+      - NUM_CONSUMER=20
 
   # API - Instância 2 (Colaboradora)
   api02:
@@ -57,7 +57,7 @@ services:
       - URL_FALLBACK=http://payment-processor-fallback:8080
       - ROLE=COLAB 
       - AMBIENTE=PROD
-      - NUM_CONSUMER=50
+      - NUM_CONSUMER=20
 
   # Fila de Mensagens
   nats:
