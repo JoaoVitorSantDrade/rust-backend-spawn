@@ -8,10 +8,11 @@ name = "rust-backend"
 path = "src/main.rs"
 
 [profile.release]
+debug = true
 lto = "fat"
-codegen-units = 1
-strip = true
+codegen-units = 4
 panic = "abort"
+
 
 [dependencies]
 async-nats = "0.42.0"
