@@ -1,8 +1,6 @@
-use std::time::Duration;
-
-use tracing::{info, warn};
-
 use crate::constantes;
+use std::time::Duration;
+use tracing::{info, warn};
 
 pub async fn cria_cliente_nats() -> async_nats::Client {
     let nats_url = std::env::var("NATS_URL").unwrap_or_else(|_| constantes::NATS_URL.to_string());

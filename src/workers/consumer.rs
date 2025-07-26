@@ -1,10 +1,10 @@
+use axum::body::Bytes;
 use std::{sync::Arc, time::Duration};
-
 use tokio::{
     sync::{RwLock, mpsc::UnboundedReceiver},
     task,
 };
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::{
     api::redis::salvar_pagamento,
@@ -15,14 +15,33 @@ use crate::{
     },
 };
 
-pub async fn cria_worker_consumidor(receptor: UnboundedReceiver<Payment>, state: AppState) {
-    info!("[WORKER CONSUMIDOR] Iniciado!");
-    let mut rx = receptor;
-    while let Some(payment) = rx.recv().await {
-        info!("📦 Pagamento recebido: ID {}", payment.correlation_id);
-        tokio::spawn(processa_pagamento(state.clone(), payment));
-        info!("🧵 Task criada para lidar com pagamento");
+pub async fn worker_processa_pagamento(
+    worker_id: u32,
+    state: AppState,
+    mut receiver: UnboundedReceiver<Bytes>,
+) {
+    info!("[Worker {}] Iniciado!", worker_id);
+
+    while let Some(body_bytes) = receiver.recv().await {
+        let mut bytes_vec = body_bytes.to_vec();
+        let payload: Payment = match simd_json::from_slice(&mut bytes_vec) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Mensagem inválida recebida, descartando: {}", e);
+                continue;
+            }
+        };
+
+        let payment = Payment {
+            correlation_id: payload.correlation_id,
+            amount: payload.amount,
+            requested_at: None,
+            tipo: None,
+        };
+
+        processa_pagamento(state.clone(), payment).await;
     }
+    info!("[Worker {}] Canal fechado. Encerrando.", worker_id);
 }
 async fn escolher_processador(
     state: &AppState,
@@ -40,12 +59,15 @@ async fn escolher_processador(
     (None, TipoProcessador::None)
 }
 
-async fn processa_pagamento(state: AppState, mut payment: Payment) {
+#[instrument(skip_all, fields(correlation_id = %payment.correlation_id))]
+pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
     let task_id = task::id();
-    let mut retry_delay = Duration::from_secs(1);
-    let max_retry_delay = Duration::from_secs(4);
-    let max_retry_times = 5u8;
+    let mut retry_delay = Duration::from_millis(10);
+    let max_retry_delay = Duration::from_secs(1);
+    let max_retry_times = 30u8;
     let mut retry_times = 0u8;
+
+    payment.update_date();
 
     loop {
         if retry_times >= max_retry_times {
@@ -83,7 +105,7 @@ async fn processa_pagamento(state: AppState, mut payment: Payment) {
             guard.address.clone()
         };
         let payment_url = format!("{}/payments", address);
-        payment.update_date();
+
         let response_result = state
             .http_client
             .post(&payment_url)
@@ -98,11 +120,8 @@ async fn processa_pagamento(state: AppState, mut payment: Payment) {
                     task_id, payment.correlation_id, tipo
                 );
                 payment.set_processador(tipo);
-                salvar_pagamento(&payment, &state).await;
-                info!(
-                    "[TASK {}] - [PROCESSAMENTO-{}] Pagamento salvo no Redis.",
-                    task_id, payment.correlation_id
-                );
+                salvar_pagamento(payment, &state).await;
+                info!("[TASK {}] Pagamento salvo no Redis.", task_id);
                 return;
             }
 

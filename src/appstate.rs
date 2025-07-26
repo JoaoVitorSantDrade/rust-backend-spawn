@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicUsize};
 
+use axum::body::Bytes;
 use deadpool::managed::Pool;
 use deadpool_redis::{Connection, Manager};
 use reqwest::Client;
 use tokio::sync::{RwLock, mpsc};
 
-use crate::models::{payment::Payment, processor::Processor};
+use crate::models::processor::Processor;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -13,5 +14,7 @@ pub struct AppState {
     pub http_client: Client,
     pub redis_pool: Pool<Manager, Connection>,
     pub nats_client: async_nats::Client,
-    pub sender_queue: mpsc::UnboundedSender<Payment>,
+    pub sender_queue: Arc<Vec<mpsc::UnboundedSender<Bytes>>>,
+    pub round_robin_counter: Arc<AtomicUsize>,
+    pub fast_furious: Arc<tokio::sync::Semaphore>,
 }
