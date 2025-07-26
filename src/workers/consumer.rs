@@ -1,7 +1,7 @@
 use axum::body::Bytes;
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{RwLock, mpsc::UnboundedReceiver},
+    sync::{RwLock, mpsc::Receiver},
     task,
 };
 use tracing::{error, info, instrument, warn};
@@ -18,7 +18,7 @@ use crate::{
 pub async fn worker_processa_pagamento(
     worker_id: u32,
     state: AppState,
-    mut receiver: UnboundedReceiver<Bytes>,
+    mut receiver: Receiver<Bytes>,
 ) {
     info!("[Worker {}] Iniciado!", worker_id);
 
@@ -45,15 +45,21 @@ pub async fn worker_processa_pagamento(
 }
 async fn escolher_processador(
     state: &AppState,
+    retry_max: u8,
+    retry: u8,
 ) -> (Option<Arc<RwLock<Processor>>>, TipoProcessador) {
     let is_default_failing = state.processors[0].read().await.failing;
     if !is_default_failing {
         return (Some(state.processors[0].clone()), TipoProcessador::Default);
     }
 
-    let is_fallback_failing = state.processors[1].read().await.failing;
-    if !is_fallback_failing {
-        return (Some(state.processors[1].clone()), TipoProcessador::Fallback);
+    let fallback_threshold =
+        (retry_max as f32 * (state.retry_default_percentage / 100.0)).floor() as u8;
+    if retry >= fallback_threshold {
+        let is_fallback_failing = state.processors[1].read().await.failing;
+        if !is_fallback_failing {
+            return (Some(state.processors[1].clone()), TipoProcessador::Fallback);
+        }
     }
 
     (None, TipoProcessador::None)
@@ -64,7 +70,7 @@ pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
     let task_id = task::id();
     let mut retry_delay = Duration::from_millis(10);
     let max_retry_delay = Duration::from_secs(1);
-    let max_retry_times = 30u8;
+    let max_retry_times = 40u8;
     let mut retry_times = 0u8;
 
     payment.update_date();
@@ -78,7 +84,8 @@ pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
             return;
         }
 
-        let (processor_opt, tipo) = escolher_processador(&state).await;
+        let (processor_opt, tipo) =
+            escolher_processador(&state, max_retry_times, retry_times).await;
 
         let processor_arc = match processor_opt {
             Some(p) => {

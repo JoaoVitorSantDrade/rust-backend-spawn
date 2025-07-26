@@ -2,7 +2,7 @@ name: rust-backend-spawn
 
 
 x-api-base: &api-base
-  image: jvsandrade/rust-backend-spawn:latest
+  image: jvsandrade/rust-backend-spawn:${DOCKER_TAG:-latest}
   depends_on:
     redis:
       condition: service_healthy
@@ -13,7 +13,7 @@ x-api-base: &api-base
     resources:
       limits:
         cpus: "0.5"
-        memory: "60MB"
+        memory: "100MB"
 
 services:
   nginx:
@@ -31,7 +31,7 @@ services:
       resources:
         limits:
           cpus: "0.39"
-          memory: "80MB"
+          memory: "60MB"
 
   # API - Instância 1 (Líder)
   api01:
@@ -44,7 +44,8 @@ services:
       - URL_FALLBACK=http://payment-processor-fallback:8080
       - ROLE=LIDER 
       - AMBIENTE=PROD
-      - NUM_CONSUMER=20
+      - NUM_CONSUMER=80
+      - RETRY_DEFAULT_PERCENTAGE=90
 
   # API - Instância 2 (Colaboradora)
   api02:
@@ -57,7 +58,8 @@ services:
       - URL_FALLBACK=http://payment-processor-fallback:8080
       - ROLE=COLAB 
       - AMBIENTE=PROD
-      - NUM_CONSUMER=20
+      - NUM_CONSUMER=80
+      - RETRY_DEFAULT_PERCENTAGE=90
 
   # Fila de Mensagens
   nats:
@@ -95,7 +97,7 @@ services:
         resources:
           limits:
             cpus: "0.1"
-            memory: "120MB"
+            memory: "60MB"
 
 networks:
   rinha-net:

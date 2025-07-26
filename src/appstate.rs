@@ -14,7 +14,8 @@ pub struct AppState {
     pub http_client: Client,
     pub redis_pool: Pool<Manager, Connection>,
     pub nats_client: async_nats::Client,
-    pub sender_queue: Arc<Vec<mpsc::UnboundedSender<Bytes>>>,
+    pub sender_queue: Arc<Vec<mpsc::Sender<Bytes>>>,
     pub round_robin_counter: Arc<AtomicUsize>,
     pub fast_furious: Arc<tokio::sync::Semaphore>,
+    pub retry_default_percentage: f32,
 }

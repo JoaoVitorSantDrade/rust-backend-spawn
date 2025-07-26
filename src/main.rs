@@ -20,13 +20,13 @@ use axum::{
     error_handling::HandleErrorLayer,
     routing::{get, post},
 };
-use reqwest::StatusCode;
+
 use std::{
     env,
     sync::{Arc, atomic::AtomicUsize},
 };
 use tokio::sync::{Semaphore, mpsc};
-use tower::{BoxError, ServiceBuilder, buffer::BufferLayer, limit::ConcurrencyLimitLayer};
+use tower::{ServiceBuilder, buffer::BufferLayer, limit::ConcurrencyLimitLayer};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
@@ -75,10 +75,14 @@ async fn main() {
     let mut receivers = Vec::with_capacity(num_workers);
 
     for _ in 0..num_workers {
-        let (sender, receiver) = mpsc::unbounded_channel::<Bytes>();
+        let (sender, receiver) = mpsc::channel::<Bytes>(1000);
         senders.push(sender);
         receivers.push(receiver);
     }
+    let retry_percentage = env::var("RETRY_DEFAULT_PERCENTAGE")
+        .unwrap_or_else(|_| "75.0".to_string())
+        .parse()
+        .unwrap_or(75.0);
 
     let nats_client = cria_cliente_nats().await;
     let app_state = AppState {
@@ -89,6 +93,7 @@ async fn main() {
         sender_queue: Arc::new(senders),
         round_robin_counter: Arc::new(AtomicUsize::new(0)),
         fast_furious: Arc::new(Semaphore::new(60)),
+        retry_default_percentage: retry_percentage,
     };
 
     info!("Iniciando {} workers consumidores...", num_workers);
@@ -119,17 +124,18 @@ async fn main() {
         .route("/purge-payments", post(handler::purge_payments))
         .layer(
             ServiceBuilder::new()
-                .layer(HandleErrorLayer::new(handle_tower_error))
-                .layer(BufferLayer::new(64))
-                .layer(ConcurrencyLimitLayer::new(20)),
+                .layer(HandleErrorLayer::new(handler::handle_tower_error))
+                .layer(BufferLayer::new(16))
+                .layer(ConcurrencyLimitLayer::new(16)),
         );
 
     let low_priority_router = Router::new()
         .route("/payments", post(handler::submit_work_handler))
         .layer(
             ServiceBuilder::new()
-                .layer(HandleErrorLayer::new(handle_tower_error))
-                .layer(BufferLayer::new(1024 * 3)),
+                .layer(HandleErrorLayer::new(handler::handle_tower_error))
+                .layer(BufferLayer::new(1024 * 6))
+                .layer(ConcurrencyLimitLayer::new(700)),
         );
     let app = high_priority_router
         .merge(low_priority_router)
@@ -137,11 +143,4 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:9999").await.unwrap();
     axum::serve(listener, app).await.unwrap();
-}
-
-async fn handle_tower_error(err: BoxError) -> (StatusCode, String) {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        format!("Serviço sobrecarregado ou falha interna: {}", err),
-    )
 }

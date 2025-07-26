@@ -54,7 +54,7 @@ pub async fn submit_work_handler(
         let counter = state.round_robin_counter.fetch_add(1, Ordering::Relaxed);
         let sender = &state.sender_queue[counter % state.sender_queue.len()];
 
-        match sender.send(body) {
+        match sender.send(body).await {
             Ok(_) => (
                 StatusCode::OK,
                 "Pagamento enfileirado com sucesso.".to_string(),
@@ -135,4 +135,11 @@ pub async fn get_payment_summary(
                 .into_response()
         }
     }
+}
+
+pub async fn handle_tower_error(err: tower::BoxError) -> (StatusCode, String) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("Serviço sobrecarregado ou falha interna: {}", err),
+    )
 }
