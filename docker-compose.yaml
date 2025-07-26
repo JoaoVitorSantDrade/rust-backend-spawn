@@ -17,7 +17,7 @@ x-api-base: &api-base
 
 services:
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.29-alpine
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
@@ -80,7 +80,7 @@ services:
           memory: "30MB"
 
   redis:
-    image: redis:7.2-alpine
+    image: redis:8-alpine
     hostname: redis
     ports:
       - "6379:6379" 
