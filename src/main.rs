@@ -31,7 +31,7 @@ use std::{
     },
 };
 use tokio::sync::{Mutex, mpsc};
-use tower::{BoxError, ServiceBuilder, buffer::BufferLayer};
+use tower::{BoxError, ServiceBuilder, buffer::BufferLayer, limit::ConcurrencyLimitLayer};
 use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
@@ -114,16 +114,27 @@ async fn main() {
         }
     }
 
-    let app = Router::new()
-        .route("/payments", post(handler::submit_work_handler))
+    let high_priority_router = Router::new()
         .route("/payments-summary", get(handler::get_payment_summary))
         .route("/purge-payments", post(handler::purge_payments))
-        .with_state(app_state)
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(handle_tower_error))
-                .layer(BufferLayer::new(1024 * 2)),
+                .layer(BufferLayer::new(64))
+                .layer(ConcurrencyLimitLayer::new(20)),
         );
+
+    let low_priority_router = Router::new()
+        .route("/payments", post(handler::submit_work_handler))
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(handle_tower_error))
+                .layer(BufferLayer::new(1024)),
+        );
+    let app = high_priority_router
+        .merge(low_priority_router)
+        .with_state(app_state);
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:9999").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
