@@ -23,8 +23,7 @@ pub async fn worker_processa_pagamento(
     info!("[Worker {}] Iniciado!", worker_id);
 
     while let Some(body_bytes) = receiver.recv().await {
-        let mut bytes_vec = body_bytes.to_vec();
-        let payload: Payment = match simd_json::from_slice(&mut bytes_vec) {
+        let payload: Payment = match simd_json::from_slice(&mut body_bytes.to_vec()) {
             Ok(p) => p,
             Err(e) => {
                 warn!("Mensagem inválida recebida, descartando: {}", e);
@@ -45,16 +44,14 @@ pub async fn worker_processa_pagamento(
 }
 async fn escolher_processador(
     state: &AppState,
-    retry_max: u8,
     retry: u8,
+    fallback_threshold: u8,
 ) -> (Option<Arc<RwLock<Processor>>>, TipoProcessador) {
     let is_default_failing = state.processors[0].read().await.failing;
     if !is_default_failing {
         return (Some(state.processors[0].clone()), TipoProcessador::Default);
     }
 
-    let fallback_threshold =
-        (retry_max as f32 * (state.retry_default_percentage / 100.0)).floor() as u8;
     if retry >= fallback_threshold {
         let is_fallback_failing = state.processors[1].read().await.failing;
         if !is_fallback_failing {
@@ -72,7 +69,8 @@ pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
     let max_retry_delay = Duration::from_secs(1);
     let max_retry_times = 40u8;
     let mut retry_times = 0u8;
-
+    let fallback_threshold =
+        (max_retry_times as f32 * (state.retry_default_percentage / 100.0)).floor() as u8;
     payment.update_date();
 
     loop {
@@ -85,7 +83,7 @@ pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
         }
 
         let (processor_opt, tipo) =
-            escolher_processador(&state, max_retry_times, retry_times).await;
+            escolher_processador(&state, retry_times, fallback_threshold).await;
 
         let processor_arc = match processor_opt {
             Some(p) => {

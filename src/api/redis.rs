@@ -1,7 +1,9 @@
+use deadpool::managed::Pool;
 use deadpool_redis::{
-    Config, Manager, PoolConfig, Runtime,
+    Config, Connection, Manager, PoolConfig, Runtime,
     redis::{RedisError, Script},
 };
+use futures::future;
 use tracing::{info, warn};
 
 use std::{env, time::Duration};
@@ -52,21 +54,15 @@ pub async fn estabelecer_pool_conexao()
 pub async fn salvar_pagamento(pagamento: models::payment::Payment, state: &AppState) {
     let max_tentativas = 50u8;
     let retry_delay = tokio::time::Duration::from_millis(1);
-
     let pagamento_chave = format!("payment:{}", &pagamento.correlation_id);
     let pagamento_tempo = pagamento.requested_at.unwrap().timestamp_micros() as u64;
-    let pagamento_json =
-        match tokio::task::spawn_blocking(move || serde_json::to_string(&pagamento)).await {
-            Ok(Ok(json)) => json,
-            Ok(Err(e)) => {
-                tracing::error!("Falha ao serializar pagamento: {}", e);
-                return;
-            }
-            Err(e) => {
-                tracing::error!("Task de serialização falhou (panic): {}", e);
-                return;
-            }
-        };
+    let pagamento_json = match simd_json::to_string(&pagamento) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::error!("Erro ao serializar: {}", e);
+            return;
+        }
+    };
     for tentativa in 1..=max_tentativas {
         let mut conn = match state.redis_pool.get().await {
             Ok(c) => c,
@@ -181,4 +177,21 @@ pub async fn expurgar_todos_pagamentos(state: &AppState) -> Result<(), RedisErro
     let mut conn = state.redis_pool.get().await.unwrap();
     let () = redis::cmd("FLUSHDB").query_async(&mut conn).await?;
     Ok(())
+}
+
+pub async fn pre_aquecer_pool_redis(pool: &Pool<Manager, Connection>, num_conexoes: usize) {
+    info!(
+        "Pré-aquecendo o pool do Redis com {} conexões...",
+        num_conexoes
+    );
+    let mut tasks = Vec::with_capacity(num_conexoes);
+    for _ in 0..num_conexoes {
+        let pool_clone = pool.clone();
+        tasks.push(tokio::spawn(async move {
+            let _conn = pool_clone.get().await;
+        }));
+    }
+
+    future::join_all(tasks).await;
+    info!("✅ Pool do Redis pré-aquecido com sucesso.");
 }

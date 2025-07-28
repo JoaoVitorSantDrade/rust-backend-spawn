@@ -75,7 +75,7 @@ async fn main() {
     let mut receivers = Vec::with_capacity(num_workers);
 
     for _ in 0..num_workers {
-        let (sender, receiver) = mpsc::channel::<Bytes>(1000);
+        let (sender, receiver) = mpsc::channel::<Bytes>(300);
         senders.push(sender);
         receivers.push(receiver);
     }
@@ -92,10 +92,10 @@ async fn main() {
         nats_client: nats_client,
         sender_queue: Arc::new(senders),
         round_robin_counter: Arc::new(AtomicUsize::new(0)),
-        fast_furious: Arc::new(Semaphore::new(60)),
+        fast_furious: Arc::new(Semaphore::new(100)),
         retry_default_percentage: retry_percentage,
     };
-
+    api::redis::pre_aquecer_pool_redis(&app_state.redis_pool, num_workers).await;
     info!("Iniciando {} workers consumidores...", num_workers);
     for (i, receiver) in receivers.into_iter().enumerate() {
         tokio::spawn(Box::pin(consumer::worker_processa_pagamento(
@@ -135,7 +135,7 @@ async fn main() {
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(handler::handle_tower_error))
                 .layer(BufferLayer::new(1024 * 6))
-                .layer(ConcurrencyLimitLayer::new(700)),
+                .layer(ConcurrencyLimitLayer::new(800)),
         );
     let app = high_priority_router
         .merge(low_priority_router)

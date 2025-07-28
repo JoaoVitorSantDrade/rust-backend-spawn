@@ -12,8 +12,8 @@ x-api-base: &api-base
   deploy:
     resources:
       limits:
-        cpus: "0.5"
-        memory: "100MB"
+        cpus: "0.45"
+        memory: "120MB"
 
 services:
   nginx:
@@ -30,8 +30,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.39"
-          memory: "60MB"
+          cpus: "0.44"
+          memory: "50MB"
 
   # API - Instância 1 (Líder)
   api01:
@@ -44,8 +44,8 @@ services:
       - URL_FALLBACK=http://payment-processor-fallback:8080
       - ROLE=LIDER 
       - AMBIENTE=PROD
-      - NUM_CONSUMER=80
-      - RETRY_DEFAULT_PERCENTAGE=90
+      - NUM_CONSUMER=200
+      - RETRY_DEFAULT_PERCENTAGE=70
 
   # API - Instância 2 (Colaboradora)
   api02:
@@ -58,8 +58,8 @@ services:
       - URL_FALLBACK=http://payment-processor-fallback:8080
       - ROLE=COLAB 
       - AMBIENTE=PROD
-      - NUM_CONSUMER=80
-      - RETRY_DEFAULT_PERCENTAGE=90
+      - NUM_CONSUMER=200
+      - RETRY_DEFAULT_PERCENTAGE=70
 
   # Fila de Mensagens
   nats:
@@ -79,10 +79,10 @@ services:
       resources:
         limits:
           cpus: "0.01"
-          memory: "30MB"
+          memory: "10MB"
 
   redis:
-    image: redis:8-alpine
+    image: redis:8.2-rc1-alpine
     hostname: redis
     ports:
       - "6379:6379" 
@@ -96,8 +96,8 @@ services:
     deploy:
         resources:
           limits:
-            cpus: "0.1"
-            memory: "60MB"
+            cpus: "0.15"
+            memory: "50MB"
 
 networks:
   rinha-net:

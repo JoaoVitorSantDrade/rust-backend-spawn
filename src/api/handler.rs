@@ -14,10 +14,7 @@ use crate::{
     models::{self, data_range::DateRangeParams, payment::Payment, summary::PaymentSummary},
 };
 
-pub async fn submit_work_handler(
-    State(state): State<AppState>,
-    body: Bytes,
-) -> (StatusCode, String) {
+pub async fn submit_work_handler(State(state): State<AppState>, body: Bytes) -> StatusCode {
     let semaphore = state.fast_furious.clone();
 
     if let Ok(permit) = semaphore.try_acquire_owned() {
@@ -28,7 +25,7 @@ pub async fn submit_work_handler(
             Ok(p) => p,
             Err(e) => {
                 warn!("Payload inválido no caminho rápido: {}", e);
-                return (StatusCode::BAD_REQUEST, "JSON inválido".to_string());
+                return StatusCode::BAD_REQUEST;
             }
         };
 
@@ -44,10 +41,7 @@ pub async fn submit_work_handler(
             crate::workers::consumer::processa_pagamento(state.clone(), payment).await;
         });
 
-        (
-            StatusCode::OK,
-            "Pagamento recebido para processamento.".to_string(),
-        )
+        StatusCode::OK
     } else {
         info!("Caminho rápido ocupado. Usando a fila...");
 
@@ -55,40 +49,25 @@ pub async fn submit_work_handler(
         let sender = &state.sender_queue[counter % state.sender_queue.len()];
 
         match sender.send(body).await {
-            Ok(_) => (
-                StatusCode::OK,
-                "Pagamento enfileirado com sucesso.".to_string(),
-            ),
-            Err(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Fila de trabalho cheia.".to_string(),
-            ),
+            Ok(_) => StatusCode::OK,
+
+            Err(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 }
 
 #[instrument(skip(state))]
-pub async fn purge_payments(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn purge_payments(State(state): State<AppState>) -> StatusCode {
     info!("Recebida requisição para expurgar todos os pagamentos.");
 
     match redis::expurgar_todos_pagamentos(&state).await {
         Ok(_) => {
             info!("Banco de dados limpo com sucesso.");
-            (
-                StatusCode::OK,
-                Json(
-                    serde_json::json!({ "message": "Todos os dados foram removidos com sucesso." }),
-                ),
-            )
-                .into_response()
+            StatusCode::OK
         }
         Err(e) => {
             error!("Erro ao expurgar o banco de dados: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Falha ao limpar o banco de dados.".to_string(),
-            )
-                .into_response()
+            StatusCode::INTERNAL_SERVER_ERROR
         }
     }
 }
@@ -137,9 +116,6 @@ pub async fn get_payment_summary(
     }
 }
 
-pub async fn handle_tower_error(err: tower::BoxError) -> (StatusCode, String) {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        format!("Serviço sobrecarregado ou falha interna: {}", err),
-    )
+pub async fn handle_tower_error(err: tower::BoxError) -> StatusCode {
+    StatusCode::SERVICE_UNAVAILABLE
 }

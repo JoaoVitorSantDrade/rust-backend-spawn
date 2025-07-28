@@ -30,19 +30,12 @@ RUN rm -f target/release/deps/rust_backend*
 
 # Compila o seu código-fonte. Esta etapa será muito mais rápida, pois as
 # dependências já estão em cache.
-RUN RUSTFLAGS="--cfg tokio_unstable" cargo build --release --quiet
+RUN RUSTFLAGS="--cfg tokio_unstable -C target-cpu=x86-64-v3" cargo build --release --quiet
 
 
 # --- Estágio 2: Final ---
-# Usamos uma imagem base mínima do Debian para a imagem final, garantindo segurança e tamanho reduzido.
-FROM debian:bookworm-slim
+FROM gcr.io/distroless/cc-debian12
 
-# Instala apenas as dependências de runtime necessárias.
-# Para casos que usam OpenSSL, a dependência `libssl` é necessária.
-RUN apt-get update && apt-get install -y libssl3 && rm -rf /var/lib/apt/lists/*
-
-# Copia APENAS o binário compilado do estágio de "builder".
-# O nome do binário é "rust-backend", conforme definido no Cargo.toml.
 COPY --from=builder /usr/src/app/target/release/rust-backend /usr/local/bin/rust-backend
 
 # Expõe a porta que a aplicação vai usar (informativo para o Docker).
