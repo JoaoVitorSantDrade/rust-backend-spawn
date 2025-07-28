@@ -6,7 +6,6 @@ use axum::{
 };
 use rust_decimal::Decimal;
 use std::{str::FromStr, sync::atomic::Ordering};
-use tracing::{error, info, instrument, warn};
 
 use crate::{
     api::redis,
@@ -18,13 +17,10 @@ pub async fn submit_work_handler(State(state): State<AppState>, body: Bytes) -> 
     let semaphore = state.fast_furious.clone();
 
     if let Ok(permit) = semaphore.try_acquire_owned() {
-        info!("Executando no caminho rápido (fast path)...");
-
         let mut bytes_vec = body.to_vec();
         let payload: Payment = match simd_json::from_slice(&mut bytes_vec) {
             Ok(p) => p,
-            Err(e) => {
-                warn!("Payload inválido no caminho rápido: {}", e);
+            Err(_) => {
                 return StatusCode::BAD_REQUEST;
             }
         };
@@ -43,8 +39,6 @@ pub async fn submit_work_handler(State(state): State<AppState>, body: Bytes) -> 
 
         StatusCode::OK
     } else {
-        info!("Caminho rápido ocupado. Usando a fila...");
-
         let counter = state.round_robin_counter.fetch_add(1, Ordering::Relaxed);
         let sender = &state.sender_queue[counter % state.sender_queue.len()];
 
@@ -56,29 +50,17 @@ pub async fn submit_work_handler(State(state): State<AppState>, body: Bytes) -> 
     }
 }
 
-#[instrument(skip(state))]
 pub async fn purge_payments(State(state): State<AppState>) -> StatusCode {
-    info!("Recebida requisição para expurgar todos os pagamentos.");
-
     match redis::expurgar_todos_pagamentos(&state).await {
-        Ok(_) => {
-            info!("Banco de dados limpo com sucesso.");
-            StatusCode::OK
-        }
-        Err(e) => {
-            error!("Erro ao expurgar o banco de dados: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
+        Ok(_) => StatusCode::OK,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
-#[instrument(skip(state))]
 pub async fn get_payment_summary(
     State(state): State<AppState>,
     Query(params): Query<DateRangeParams>,
 ) -> impl IntoResponse {
-    info!("Iniciando a coleta de sumário de pagamentos.");
-
     let from_ts = params
         .from
         .map(|dt| dt.timestamp_micros() as u64)
@@ -90,9 +72,6 @@ pub async fn get_payment_summary(
 
     match redis::coletar_entre_timestamp(&state, from_ts, to_ts).await {
         Ok((default_reqs, default_amt_str, fallback_reqs, fallback_amt_str)) => {
-            info!("Sumário agregado recebido do Redis com sucesso.");
-
-            // Constrói o sumário a partir do tuple, usando Decimal::from_str
             let summary = PaymentSummary {
                 default: models::summary::Summary {
                     total_requests: default_reqs,
@@ -105,14 +84,11 @@ pub async fn get_payment_summary(
             };
             (StatusCode::OK, Json(summary)).into_response()
         }
-        Err(e) => {
-            error!("Erro ao coletar sumário de pagamentos: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Falha ao buscar o sumário de pagamentos.".to_string(),
-            )
-                .into_response()
-        }
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Falha ao buscar o sumário de pagamentos.".to_string(),
+        )
+            .into_response(),
     }
 }
 

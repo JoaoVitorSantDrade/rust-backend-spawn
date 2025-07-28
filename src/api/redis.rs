@@ -4,7 +4,6 @@ use deadpool_redis::{
     redis::{RedisError, Script},
 };
 use futures::future;
-use tracing::{info, warn};
 
 use std::{env, time::Duration};
 
@@ -23,24 +22,15 @@ pub async fn estabelecer_pool_conexao()
 
     for tentativa in 1..=max_tentativas {
         let mut cfg = Config::from_url(&db_url);
-        cfg.pool = Some(PoolConfig::new(pool_qtd * 2));
-
-        info!(
-            "Tentando criar pool de conexões Redis (tentativa {}/{})...",
-            tentativa, max_tentativas
-        );
+        cfg.pool = Some(PoolConfig::new(pool_qtd * 3));
 
         match cfg.create_pool(Some(Runtime::Tokio1)) {
             Ok(pool) => {
-                info!("✅ Pool de conexões Redis criado com sucesso!");
                 return pool; // Renomeado de 'cliente' para 'pool' para clareza
             }
 
-            Err(e) => {
-                warn!("Falha ao criar pool de conexões Redis: {}", e); // CORREÇÃO: Mensagem de log
-
+            Err(_) => {
                 if tentativa < max_tentativas {
-                    warn!("Tentando novamente em {} segundos...", delay_secs);
                     tokio::time::sleep(Duration::from_secs(delay_secs)).await;
                 }
             }
@@ -51,28 +41,21 @@ pub async fn estabelecer_pool_conexao()
         max_tentativas
     );
 }
-pub async fn salvar_pagamento(pagamento: models::payment::Payment, state: &AppState) {
+pub async fn salvar_pagamento(pagamento: &models::payment::Payment, state: &AppState) {
     let max_tentativas = 50u8;
     let retry_delay = tokio::time::Duration::from_millis(1);
     let pagamento_chave = format!("payment:{}", &pagamento.correlation_id);
     let pagamento_tempo = pagamento.requested_at.unwrap().timestamp_micros() as u64;
     let pagamento_json = match simd_json::to_string(&pagamento) {
         Ok(json) => json,
-        Err(e) => {
-            tracing::error!("Erro ao serializar: {}", e);
+        Err(_) => {
             return;
         }
     };
-    for tentativa in 1..=max_tentativas {
+    for _ in 1..=max_tentativas {
         let mut conn = match state.redis_pool.get().await {
             Ok(c) => c,
-            Err(e) => {
-                tracing::error!(
-                    "[Redis Save] Falha ao pegar conexão (tentativa {}/{}): {}. Tentando novamente...",
-                    tentativa,
-                    max_tentativas,
-                    e
-                );
+            Err(_) => {
                 tokio::time::sleep(retry_delay).await;
                 continue;
             }
@@ -92,13 +75,7 @@ pub async fn salvar_pagamento(pagamento: models::payment::Payment, state: &AppSt
             Ok(_) => {
                 return;
             }
-            Err(e) => {
-                tracing::warn!(
-                    "[Redis Save] Falha ao executar pipeline (tentativa {}/{}): {}. Tentando novamente...",
-                    tentativa,
-                    max_tentativas,
-                    e
-                );
+            Err(_) => {
                 tokio::time::sleep(retry_delay).await;
             }
         }
@@ -110,7 +87,6 @@ pub async fn coletar_entre_timestamp(
     from: u64,
     to: u64,
 ) -> Result<(u64, String, u64, String), RedisError> {
-    // Pega uma conexão do pool de forma segura, propagando o erro se falhar.
     let mut conn = state.redis_pool.get().await.unwrap();
 
     let sorted_set_key = "payments_by_date";
@@ -127,8 +103,8 @@ pub async fn coletar_entre_timestamp(
         local fallback_reqs = 0
         local fallback_amt = 0.0
         
-        -- Processa as chaves em lotes de 5000 para evitar limites do Lua
-        local chunk_size = 5000
+        -- Processa as chaves em lotes de 3000 para evitar limites do Lua
+        local chunk_size = 3000
         for i = 1, #keys, chunk_size do
             -- Cria uma subtabela (chunk) para a chamada MGET
             local chunk_keys = {}
@@ -180,10 +156,6 @@ pub async fn expurgar_todos_pagamentos(state: &AppState) -> Result<(), RedisErro
 }
 
 pub async fn pre_aquecer_pool_redis(pool: &Pool<Manager, Connection>, num_conexoes: usize) {
-    info!(
-        "Pré-aquecendo o pool do Redis com {} conexões...",
-        num_conexoes
-    );
     let mut tasks = Vec::with_capacity(num_conexoes);
     for _ in 0..num_conexoes {
         let pool_clone = pool.clone();
@@ -193,5 +165,4 @@ pub async fn pre_aquecer_pool_redis(pool: &Pool<Manager, Connection>, num_conexo
     }
 
     future::join_all(tasks).await;
-    info!("✅ Pool do Redis pré-aquecido com sucesso.");
 }

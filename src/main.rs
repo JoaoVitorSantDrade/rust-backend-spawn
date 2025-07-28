@@ -8,7 +8,10 @@ mod models;
 mod workers;
 use crate::{
     api::{
-        handler, http::cria_cliente_http, nats::cria_cliente_nats, redis::estabelecer_pool_conexao,
+        handler::{self},
+        http::cria_cliente_http,
+        nats::cria_cliente_nats,
+        redis::{coletar_entre_timestamp, estabelecer_pool_conexao},
     },
     appstate::AppState,
     models::processor::{Processor, TipoProcessador},
@@ -27,30 +30,9 @@ use std::{
 };
 use tokio::sync::{Semaphore, mpsc};
 use tower::{ServiceBuilder, buffer::BufferLayer, limit::ConcurrencyLimitLayer};
-use tracing::info;
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[tokio::main(worker_threads = 4)]
 async fn main() {
-    match env::var("AMBIENTE").as_deref() {
-        Ok("PROD") => {
-            let file_appender = tracing_appender::rolling::never("./logs", "rinha.log");
-            let (non_blocking_writer, _guard) = tracing_appender::non_blocking(file_appender);
-            let subscriber = FmtSubscriber::builder()
-                .with_env_filter(EnvFilter::from_default_env())
-                .with_writer(non_blocking_writer)
-                .json()
-                .finish();
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("setting default subscriber failed");
-            info!("Modo de produção ativado!");
-        }
-        _ => {
-            console_subscriber::init();
-            info!("Modo de desenvolvedor ativado!");
-        }
-    }
-
     let processador_default = Processor::new_async(
         false,
         100,
@@ -96,10 +78,9 @@ async fn main() {
         retry_default_percentage: retry_percentage,
     };
     api::redis::pre_aquecer_pool_redis(&app_state.redis_pool, num_workers).await;
-    info!("Iniciando {} workers consumidores...", num_workers);
-    for (i, receiver) in receivers.into_iter().enumerate() {
+    let _ = coletar_entre_timestamp(&app_state.clone(), 0, u64::MAX).await;
+    for receiver in receivers.into_iter() {
         tokio::spawn(Box::pin(consumer::worker_processa_pagamento(
-            i as u32,
             app_state.clone(),
             receiver,
         )));

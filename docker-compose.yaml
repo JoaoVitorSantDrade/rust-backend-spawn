@@ -12,8 +12,12 @@ x-api-base: &api-base
   deploy:
     resources:
       limits:
-        cpus: "0.45"
+        cpus: "0.5"
         memory: "120MB"
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
 
 services:
   nginx:
@@ -30,7 +34,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.44"
+          cpus: "0.39"
           memory: "50MB"
 
   # API - Instância 1 (Líder)
@@ -96,7 +100,7 @@ services:
     deploy:
         resources:
           limits:
-            cpus: "0.15"
+            cpus: "0.1"
             memory: "50MB"
 
 networks:

@@ -2,7 +2,6 @@ use std::{sync::Arc, time::Duration};
 
 use reqwest::Version;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
 
 use crate::{
     appstate::AppState,
@@ -16,7 +15,6 @@ pub async fn coleta_saude_processador(state: AppState, tipo: TipoProcessador) {
         TipoProcessador::Default => 0,
         TipoProcessador::Fallback => 1,
         TipoProcessador::None => {
-            error!("Processador não teve seu tipo definido!");
             return;
         }
     };
@@ -27,11 +25,6 @@ pub async fn coleta_saude_processador(state: AppState, tipo: TipoProcessador) {
         let processor_guard = processor_arc.read().await;
         processor_guard.address.clone() + "/payments/service-health"
     };
-
-    info!(
-        "[HEALTH-{:?}] Iniciando monitoramento de saúde para o endereço: {:?}",
-        tipo, &address
-    );
 
     loop {
         let min_response_time = processor_arc.read().await.min_response_time;
@@ -51,10 +44,7 @@ pub async fn coleta_saude_processador(state: AppState, tipo: TipoProcessador) {
                             processor_guard.failing = json.failing;
                             processor_guard.min_response_time = json.min_response_time;
                             drop(processor_guard);
-                            info!(
-                                "[HEALTH-{:?}] Status de saúde foi atualizado com sucesso.",
-                                tipo
-                            );
+
                             nats_client
                                 .publish(
                                     format!("processor.{}.status", indice),
@@ -63,26 +53,16 @@ pub async fn coleta_saude_processador(state: AppState, tipo: TipoProcessador) {
                                 .await
                                 .unwrap();
                         }
-                        Err(e) => {
+                        Err(_) => {
                             marcar_como_falho(&processor_arc).await;
-                            warn!(
-                                "[HEALTH-{:?}] Falha ao decodificar JSON do health check: {}.",
-                                tipo, e
-                            );
                         }
                     }
                 } else {
                     marcar_como_falho(&processor_arc).await;
-                    warn!(
-                        "[HEALTH-{:?}] Servidor respondeu com status {}.",
-                        tipo,
-                        _response.status()
-                    );
                 }
             }
-            Err(e) => {
+            Err(_) => {
                 marcar_como_falho(&processor_arc).await;
-                error!("[HEALTH-{:?}] Requisição não foi aceita. {}.", tipo, e);
             }
         };
         tokio::time::sleep(Duration::from_secs(5) + Duration::from_millis(min_response_time)).await;

@@ -1,10 +1,6 @@
 use axum::body::Bytes;
 use std::{sync::Arc, time::Duration};
-use tokio::{
-    sync::{RwLock, mpsc::Receiver},
-    task,
-};
-use tracing::{error, info, instrument, warn};
+use tokio::sync::{RwLock, mpsc::Receiver};
 
 use crate::{
     api::redis::salvar_pagamento,
@@ -15,18 +11,11 @@ use crate::{
     },
 };
 
-pub async fn worker_processa_pagamento(
-    worker_id: u32,
-    state: AppState,
-    mut receiver: Receiver<Bytes>,
-) {
-    info!("[Worker {}] Iniciado!", worker_id);
-
+pub async fn worker_processa_pagamento(state: AppState, mut receiver: Receiver<Bytes>) {
     while let Some(body_bytes) = receiver.recv().await {
         let payload: Payment = match simd_json::from_slice(&mut body_bytes.to_vec()) {
             Ok(p) => p,
-            Err(e) => {
-                warn!("Mensagem inválida recebida, descartando: {}", e);
+            Err(_) => {
                 continue;
             }
         };
@@ -40,7 +29,6 @@ pub async fn worker_processa_pagamento(
 
         processa_pagamento(state.clone(), payment).await;
     }
-    info!("[Worker {}] Canal fechado. Encerrando.", worker_id);
 }
 async fn escolher_processador(
     state: &AppState,
@@ -62,10 +50,8 @@ async fn escolher_processador(
     (None, TipoProcessador::None)
 }
 
-#[instrument(skip_all, fields(correlation_id = %payment.correlation_id))]
 pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
-    let task_id = task::id();
-    let mut retry_delay = Duration::from_millis(10);
+    let mut retry_delay = Duration::from_millis(50);
     let max_retry_delay = Duration::from_secs(1);
     let max_retry_times = 40u8;
     let mut retry_times = 0u8;
@@ -75,10 +61,6 @@ pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
 
     loop {
         if retry_times >= max_retry_times {
-            error!(
-                "[TASK {}] - [PROCESSAMENTO-{}] Número máximo de {} tentativas atingido. ❌ Encerrando task",
-                task_id, payment.correlation_id, max_retry_times
-            );
             return;
         }
 
@@ -86,18 +68,8 @@ pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
             escolher_processador(&state, retry_times, fallback_threshold).await;
 
         let processor_arc = match processor_opt {
-            Some(p) => {
-                info!(
-                    "[TASK {}] - [PROCESSAMENTO-{}] Processador {:?} escolhido.",
-                    task_id, payment.correlation_id, tipo
-                );
-                p
-            }
+            Some(p) => p,
             None => {
-                warn!(
-                    "[TASK {}] - [PROCESSAMENTO-{}] Nenhum processador disponível. Tentando novamente em {:?}...",
-                    task_id, payment.correlation_id, retry_delay
-                );
                 tokio::time::sleep(retry_delay).await;
                 retry_delay = (retry_delay * 2).min(max_retry_delay);
                 retry_times += 1;
@@ -120,40 +92,22 @@ pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
 
         match response_result {
             Ok(response) if response.status().is_success() => {
-                info!(
-                    "[TASK {}] - [PROCESSAMENTO-{}] Pagamento enviado com sucesso para o processador {:?}.",
-                    task_id, payment.correlation_id, tipo
-                );
                 payment.set_processador(tipo);
-                salvar_pagamento(payment, &state).await;
-                info!("[TASK {}] Pagamento salvo no Redis.", task_id);
+
+                salvar_pagamento(&payment, &state).await;
+
                 return;
             }
 
-            Ok(failed_response) => {
-                let status = failed_response.status();
-
-                let error_body = failed_response.text().await.unwrap_or_default();
-                warn!(
-                    "[TASK {}] - [PROCESSAMENTO-{}] Processador {:?} respondeu com erro: {}. Corpo: '{}'. Marcando como falho.",
-                    task_id, payment.correlation_id, tipo, status, error_body
-                );
+            Ok(_) => {
                 processor_arc.write().await.failing = true;
             }
 
-            Err(e) => {
-                error!(
-                    "[TASK {}] - [PROCESSAMENTO-{}] Erro de requisição para o processador {:?}: {}. Marcando como falho.",
-                    task_id, payment.correlation_id, tipo, e
-                );
+            Err(_) => {
                 processor_arc.write().await.failing = true;
             }
         }
 
-        warn!(
-            "[TASK {}] - [PROCESSAMENTO-{}] Falha na tentativa. Esperando {:?} para tentar novamente.",
-            task_id, payment.correlation_id, retry_delay
-        );
         tokio::time::sleep(retry_delay).await;
         retry_delay = (retry_delay * 2).min(max_retry_delay);
         retry_times += 1;
