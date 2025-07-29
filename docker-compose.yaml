@@ -14,10 +14,6 @@ x-api-base: &api-base
       limits:
         cpus: "0.5"
         memory: "120MB"
-  ulimits:
-    nofile:
-      soft: 65536
-      hard: 65536
 
 services:
   nginx:
@@ -49,7 +45,7 @@ services:
       - ROLE=LIDER 
       - AMBIENTE=PROD
       - NUM_CONSUMER=200
-      - RETRY_DEFAULT_PERCENTAGE=70
+      - RETRY_DEFAULT_PERCENTAGE=75
 
   # API - Instância 2 (Colaboradora)
   api02:
@@ -63,7 +59,7 @@ services:
       - ROLE=COLAB 
       - AMBIENTE=PROD
       - NUM_CONSUMER=200
-      - RETRY_DEFAULT_PERCENTAGE=70
+      - RETRY_DEFAULT_PERCENTAGE=75
 
   # Fila de Mensagens
   nats:

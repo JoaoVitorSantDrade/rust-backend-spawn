@@ -19,7 +19,7 @@ COPY Cargo.toml Cargo.lock ./
 # A camada de dependências só será reconstruída se o Cargo.toml ou Cargo.lock mudarem.
 RUN mkdir src && \
     echo "fn main() {}" > src/main.rs && \
-    RUSTFLAGS="--cfg tokio_unstable" cargo build --release --quiet
+    cargo build --release --quiet
 
 # Agora, copia o código-fonte real da sua aplicação.
 COPY ./src ./src
@@ -30,7 +30,7 @@ RUN rm -f target/release/deps/rust_backend*
 
 # Compila o seu código-fonte. Esta etapa será muito mais rápida, pois as
 # dependências já estão em cache.
-RUN RUSTFLAGS="--cfg tokio_unstable -C target-cpu=x86-64-v3" cargo build --release --quiet
+RUN RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release --quiet
 
 
 # --- Estágio 2: Final ---
