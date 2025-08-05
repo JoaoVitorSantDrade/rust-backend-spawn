@@ -10,43 +10,17 @@ use std::{str::FromStr, sync::atomic::Ordering};
 use crate::{
     api::redis,
     appstate::AppState,
-    models::{self, data_range::DateRangeParams, payment::Payment, summary::PaymentSummary},
+    models::{self, data_range::DateRangeParams, summary::PaymentSummary},
 };
 
 pub async fn submit_work_handler(State(state): State<AppState>, body: Bytes) -> StatusCode {
-    let semaphore = state.fast_furious.clone();
+    let counter = state.round_robin_counter.fetch_add(1, Ordering::Relaxed);
+    let sender = &state.sender_queue[counter % state.sender_queue.len()];
 
-    if let Ok(permit) = semaphore.try_acquire_owned() {
-        let mut bytes_vec = body.to_vec();
-        let payload: Payment = match simd_json::from_slice(&mut bytes_vec) {
-            Ok(p) => p,
-            Err(_) => {
-                return StatusCode::BAD_REQUEST;
-            }
-        };
+    match sender.send(body).await {
+        Ok(_) => StatusCode::OK,
 
-        let payment = Payment {
-            correlation_id: payload.correlation_id,
-            amount: payload.amount,
-            requested_at: None,
-            tipo: None,
-        };
-
-        tokio::spawn(async move {
-            let _permit = permit;
-            crate::workers::consumer::processa_pagamento(state.clone(), payment).await;
-        });
-
-        StatusCode::OK
-    } else {
-        let counter = state.round_robin_counter.fetch_add(1, Ordering::Relaxed);
-        let sender = &state.sender_queue[counter % state.sender_queue.len()];
-
-        match sender.send(body).await {
-            Ok(_) => StatusCode::OK,
-
-            Err(_) => StatusCode::SERVICE_UNAVAILABLE,
-        }
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
 

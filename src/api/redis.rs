@@ -22,11 +22,11 @@ pub async fn estabelecer_pool_conexao()
 
     for tentativa in 1..=max_tentativas {
         let mut cfg = Config::from_url(&db_url);
-        cfg.pool = Some(PoolConfig::new(pool_qtd * 3));
+        cfg.pool = Some(PoolConfig::new(pool_qtd));
 
         match cfg.create_pool(Some(Runtime::Tokio1)) {
             Ok(pool) => {
-                return pool; // Renomeado de 'cliente' para 'pool' para clareza
+                return pool;
             }
 
             Err(_) => {
@@ -43,7 +43,7 @@ pub async fn estabelecer_pool_conexao()
 }
 pub async fn salvar_pagamento(pagamento: &models::payment::Payment, state: &AppState) {
     let max_tentativas = 50u8;
-    let retry_delay = tokio::time::Duration::from_millis(1);
+    let retry_delay = tokio::time::Duration::from_micros(500);
     let pagamento_chave = format!("payment:{}", &pagamento.correlation_id);
     let pagamento_tempo = pagamento.requested_at.unwrap().timestamp_micros() as u64;
     let pagamento_json = match simd_json::to_string(&pagamento) {

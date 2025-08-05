@@ -16,6 +16,5 @@ pub struct AppState {
     pub nats_client: async_nats::Client,
     pub sender_queue: Arc<Vec<mpsc::Sender<Bytes>>>,
     pub round_robin_counter: Arc<AtomicUsize>,
-    pub fast_furious: Arc<tokio::sync::Semaphore>,
     pub retry_default_percentage: f32,
 }

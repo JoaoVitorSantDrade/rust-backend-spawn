@@ -28,20 +28,20 @@ use std::{
     env,
     sync::{Arc, atomic::AtomicUsize},
 };
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::mpsc;
 use tower::{ServiceBuilder, buffer::BufferLayer, limit::ConcurrencyLimitLayer};
 
-#[tokio::main(worker_threads = 4)]
+#[tokio::main]
 async fn main() {
     let processador_default = Processor::new_async(
         false,
-        100,
+        50,
         env::var("URL_DEFAULT").unwrap_or_else(|_| constantes::URL_DEFAULT.to_string()),
         TipoProcessador::Default,
     );
     let processador_fallback = Processor::new_async(
         false,
-        100,
+        50,
         env::var("URL_FALLBACK").unwrap_or_else(|_| constantes::URL_FALLBACK.to_string()),
         TipoProcessador::Fallback,
     );
@@ -74,7 +74,6 @@ async fn main() {
         nats_client: nats_client,
         sender_queue: Arc::new(senders),
         round_robin_counter: Arc::new(AtomicUsize::new(0)),
-        fast_furious: Arc::new(Semaphore::new(100)),
         retry_default_percentage: retry_percentage,
     };
     api::redis::pre_aquecer_pool_redis(&app_state.redis_pool, num_workers).await;
@@ -115,8 +114,8 @@ async fn main() {
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(handler::handle_tower_error))
-                .layer(BufferLayer::new(1024 * 6))
-                .layer(ConcurrencyLimitLayer::new(800)),
+                .layer(BufferLayer::new(1024 * 5))
+                .layer(ConcurrencyLimitLayer::new(600)),
         );
     let app = high_priority_router
         .merge(low_priority_router)

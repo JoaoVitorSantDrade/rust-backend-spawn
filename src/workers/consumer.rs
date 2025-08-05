@@ -51,8 +51,8 @@ async fn escolher_processador(
 }
 
 pub async fn processa_pagamento(state: AppState, mut payment: Payment) {
-    let mut retry_delay = Duration::from_millis(50);
-    let max_retry_delay = Duration::from_secs(1);
+    let mut retry_delay = Duration::from_millis(100);
+    let max_retry_delay = Duration::from_millis(700);
     let max_retry_times = 40u8;
     let mut retry_times = 0u8;
     let fallback_threshold =
